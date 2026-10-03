@@ -46,3 +46,7 @@ app.*.map.json
 
 # Widget Preview related
 .widget_preview/
+
+# Flutter SDK fetched by scripts/vercel-build.sh
+/.flutter/
+.vercel
