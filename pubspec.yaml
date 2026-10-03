@@ -1,0 +1,36 @@
+name: cutout
+description: "Cutout removes image backgrounds entirely on-device."
+publish_to: 'none'
+version: 0.1.0+1
+
+environment:
+  sdk: ^3.13.5
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_colorpicker: ^1.1.0
+  flutter_onnxruntime: ^1.8.5
+  gal: ^2.3.3
+  google_fonts: ^8.2.1
+  image_picker: ^1.2.3
+  pasteboard: ^0.5.0
+  path_provider: ^2.1.6
+  share_plus: ^13.3.1
+  web: ^1.1.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+  integration_test:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true
+
+  assets:
+    # U²-Net (u2netp) segmentation model, Apache-2.0. See README "Swapping models".
+    - assets/models/
+    # Bundled so text renders offline; google_fonts loads these instead of fetching.
+    - assets/google_fonts/
