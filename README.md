@@ -156,6 +156,21 @@ artifact (kept for 30 days). Download them from the run's **Summary** page.
 
 ### One-time setup: the upload key
 
+**Quickest:** on your own machine, with a JDK, `openssl` and the GitHub CLI
+logged in (`gh auth login`), run:
+
+```bash
+scripts/setup-android-signing.sh
+```
+
+It creates the upload key with a random password in `~/cutout-signing/`
+(owner-only permissions), stores the four secrets below in this repository,
+and prints the key's SHA-256 fingerprint. The key never leaves your machine
+except as an encrypted GitHub secret. **Back up that folder**: every future
+Play update must be signed with the same upload key.
+
+**Or by hand:**
+
 1. Create an upload keystore. Keep it and its passwords safe; you need the
    same key for every future update.
 
@@ -173,7 +188,9 @@ artifact (kept for 30 days). Download them from the run's **Summary** page.
    | `ANDROID_UPLOAD_KEY_ALIAS` | `upload` (or the alias you chose) |
    | `ANDROID_UPLOAD_KEY_PASSWORD` | the key password |
 
-3. In Play Console, create the app (package `com.kapetaltd.cutout`), turn on
+Then, either way:
+
+1. In Play Console, create the app (package `com.kapetaltd.cutout`), turn on
    **Play App Signing**, and upload the first signed `.aab` from a workflow
    run by hand. Google then holds the app signing key, and your upload key
    only proves uploads come from you.
