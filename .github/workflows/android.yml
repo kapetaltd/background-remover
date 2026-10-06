@@ -1,0 +1,140 @@
+# Builds a Google Play-ready Android App Bundle (.aab) on every push.
+#
+# Each run: format check → analyze → tests → signed release bundle, uploaded
+# as a workflow artifact. The version code is the workflow run number, so it
+# always increases, which Play requires for every upload.
+#
+# Signing uses the Play upload key from repository secrets (see README,
+# "Android release pipeline"). Without them the bundle is debug-signed: fine
+# for testing, but Play will reject it, and the run says so.
+#
+# Optional: with PLAY_SERVICE_ACCOUNT_JSON set, pushes to main also upload the
+# bundle to the Play Console internal testing track as a draft.
+name: Android release bundle
+
+on:
+  push:
+    branches: ["**"]
+    tags: ["v*"]
+  workflow_dispatch:
+
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  FLUTTER_VERSION: "3.47.6"
+  PACKAGE_NAME: com.kapetaltd.cutout
+
+jobs:
+  bundle:
+    name: Test and build AAB
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      HAS_PLAY_ACCOUNT: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON != '' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: gradle
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Check formatting
+        run: dart format --output=none --set-exit-if-changed lib test integration_test
+
+      - name: Analyze
+        run: flutter analyze
+
+      - name: Unit and widget tests
+        run: flutter test
+
+      - name: Restore upload key
+        id: key
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_UPLOAD_KEYSTORE_BASE64 }}
+        run: |
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            path="$RUNNER_TEMP/upload-keystore.jks"
+            echo "$KEYSTORE_BASE64" | base64 --decode > "$path"
+            echo "path=$path" >> "$GITHUB_OUTPUT"
+            echo "signed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+            echo "::warning title=Not signed for Play::ANDROID_UPLOAD_KEYSTORE_BASE64 is not set, so this bundle is debug-signed and Google Play will reject it. See README, 'Android release pipeline'."
+          fi
+
+      - name: Build app bundle
+        env:
+          CUTOUT_UPLOAD_STORE_FILE: ${{ steps.key.outputs.path }}
+          CUTOUT_UPLOAD_STORE_PASSWORD: ${{ secrets.ANDROID_UPLOAD_STORE_PASSWORD }}
+          CUTOUT_UPLOAD_KEY_ALIAS: ${{ secrets.ANDROID_UPLOAD_KEY_ALIAS }}
+          CUTOUT_UPLOAD_KEY_PASSWORD: ${{ secrets.ANDROID_UPLOAD_KEY_PASSWORD }}
+        run: |
+          flutter build appbundle --release \
+            --build-number="${{ github.run_number }}" \
+            --split-debug-info=build/app/outputs/symbols
+
+      - name: Verify bundle signature
+        id: verify
+        run: |
+          aab=build/app/outputs/bundle/release/app-release.aab
+          signer=$(keytool -printcert -jarfile "$aab" | grep -m1 'Owner:' || true)
+          echo "Signed by: $signer"
+          if [ "${{ steps.key.outputs.signed }}" = "true" ]; then
+            if [ -z "$signer" ] || echo "$signer" | grep -q 'Android Debug'; then
+              echo "::error::The bundle should be signed with the upload key but is not."
+              exit 1
+            fi
+          fi
+          version=$(grep -E '^version:' pubspec.yaml | sed -E 's/version: *([^+]+).*/\1/')
+          echo "name=cutout-${version}-${{ github.run_number }}" >> "$GITHUB_OUTPUT"
+          {
+            echo "### Android App Bundle"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Version | ${version} (code ${{ github.run_number }}) |"
+            echo "| Size | $(du -h "$aab" | cut -f1) |"
+            echo "| Signed for Play | ${{ steps.key.outputs.signed }} |"
+            echo "| Signer | ${signer#*Owner: } |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.verify.outputs.name }}${{ steps.key.outputs.signed != 'true' && '-debug-signed' || '' }}
+          path: |
+            build/app/outputs/bundle/release/app-release.aab
+            build/app/outputs/mapping/release/mapping.txt
+            build/app/outputs/symbols/
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish to Play internal testing (draft)
+        if: >-
+          github.ref == 'refs/heads/main' &&
+          steps.key.outputs.signed == 'true' &&
+          env.HAS_PLAY_ACCOUNT == 'true'
+        uses: r0adkll/upload-google-play@v1
+        with:
+          serviceAccountJsonPlainText: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+          packageName: ${{ env.PACKAGE_NAME }}
+          releaseFiles: build/app/outputs/bundle/release/app-release.aab
+          mappingFile: build/app/outputs/mapping/release/mapping.txt
+          track: internal
+          status: draft

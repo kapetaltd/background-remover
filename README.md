@@ -138,6 +138,67 @@ flutter test integration_test -d linux \
 (Linux isn't a shipping target. Add it locally with
 `flutter create --platforms linux .` if you want to run that.)
 
+## Android release pipeline
+
+`.github/workflows/android.yml` runs on every push to any branch (and on `v*`
+tags). It checks formatting, runs `flutter analyze` and the tests, then builds
+a release **Android App Bundle**, the format Google Play requires. The bundle,
+its R8 `mapping.txt` and the Dart debug symbols are attached to the run as an
+artifact (kept for 30 days). Download them from the run's **Summary** page.
+
+- **Version code** is the workflow run number, so every build is higher than
+  the last, as Play requires. The version name comes from `pubspec.yaml`.
+- **Signing** uses your Play *upload key* from repository secrets. Without
+  them the bundle is debug-signed: the run still succeeds, with a warning and
+  an artifact name ending in `-debug-signed`, but Play will reject that file.
+- **Target SDK** is Flutter's default (API 36) and native libraries support
+  16 KB page sizes, both of which Play currently requires.
+
+### One-time setup: the upload key
+
+1. Create an upload keystore. Keep it and its passwords safe; you need the
+   same key for every future update.
+
+   ```bash
+   keytool -genkeypair -v -keystore upload-keystore.jks -storetype JKS \
+     -keyalg RSA -keysize 2048 -validity 10000 -alias upload
+   ```
+
+2. In GitHub → **Settings → Secrets and variables → Actions**, add:
+
+   | Secret | Value |
+   | --- | --- |
+   | `ANDROID_UPLOAD_KEYSTORE_BASE64` | output of `base64 -w0 upload-keystore.jks` (macOS: `base64 -i upload-keystore.jks`) |
+   | `ANDROID_UPLOAD_STORE_PASSWORD` | the keystore password |
+   | `ANDROID_UPLOAD_KEY_ALIAS` | `upload` (or the alias you chose) |
+   | `ANDROID_UPLOAD_KEY_PASSWORD` | the key password |
+
+3. In Play Console, create the app (package `com.kapetaltd.cutout`), turn on
+   **Play App Signing**, and upload the first signed `.aab` from a workflow
+   run by hand. Google then holds the app signing key, and your upload key
+   only proves uploads come from you.
+
+To build a signed bundle locally instead, create `android/key.properties`
+(gitignored):
+
+```properties
+storeFile=/absolute/path/to/upload-keystore.jks
+storePassword=...
+keyAlias=upload
+keyPassword=...
+```
+
+then run `flutter build appbundle --release`.
+
+### Optional: automatic upload to Play
+
+Add a `PLAY_SERVICE_ACCOUNT_JSON` secret: a Google Cloud service-account key
+that has been granted release access to the app in Play Console (**Users and
+permissions**). With it, every push to `main` also uploads the signed bundle
+to the **internal testing** track as a *draft*, which you then review and roll
+out in Play Console. The Play API can't create an app or its first release,
+so the first upload in step 3 above must be manual.
+
 ## Privacy
 
 - Images never leave the device. There are no network calls in the
